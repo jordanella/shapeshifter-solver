@@ -32,8 +32,18 @@ cargo build --release
 #    open Shapeshifter, and click the pulsing red cell.
 ```
 
-The CLI also solves exported levels directly:
-`solver-core level.json` (see `tools/export_level.py`).
+No browser needed for one-off solves — the CLI works standalone:
+
+```sh
+solver-core level.json                    # solve an exported level
+python tools/solve_page.py level.html     # solve a saved page in one step
+python tools/export_level.py a.html a.json  # just the HTML -> JSON export
+```
+
+The userscript's server address is stored in Tampermonkey storage
+(default `http://127.0.0.1:8977`) — change it via the Tampermonkey menu
+entry "Set solver server address". Hosts other than 127.0.0.1/localhost
+also need a matching `@connect` line in the script header.
 
 ## The solver
 
@@ -102,8 +112,15 @@ python tests/test_parse_parity.py  # requires node
 cd tests/dom && npm install && node test_userscript_dom.js
 ```
 
-Fixture pages under `tests/fixtures/` are from the MIT-licensed
-[Bakeru](https://github.com/willnjohnson/Bakeru) repository's `inputs/`.
+Fixtures under `tests/fixtures/` are JSON puzzle extractions (pure game
+state — no Neopets page content ships with this repo). Page-dependent
+tests render synthetic Shapeshifter-shaped pages from the JSON via
+`tests/dom/render_page.js`, and the parity test round-trips
+JSON -> page -> parser -> JSON for both parsers. To additionally check the
+parsers against real saved captures on your machine, set `REAL_PAGES` to a
+directory of them when running `test_parse_parity.py`. Puzzle data
+originates from levels shipped with the MIT-licensed
+[Bakeru](https://github.com/willnjohnson/Bakeru) repository.
 
 ## Building on Windows
 

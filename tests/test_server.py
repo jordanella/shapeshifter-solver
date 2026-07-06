@@ -2,15 +2,14 @@
 
 Start the server first:  solver-core serve
 Then:                    python tests/test_server.py
+
+Fixtures are JSON puzzle extractions (see tools/export_level.py) — pure
+game state, no page markup.
 """
 
 import json
 import os
-import sys
 import urllib.request
-
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'tools'))
-import shapeshifter_page as page
 
 SERVER = 'http://127.0.0.1:8977'
 FIXTURES = os.path.join(os.path.dirname(__file__), 'fixtures')
@@ -25,22 +24,35 @@ def post_json(path, payload):
 
 
 def load(name):
-    html = open(os.path.join(FIXTURES, name),
-                encoding='utf-8', errors='ignore').read()
-    return page.parse_html(html)
+    with open(os.path.join(FIXTURES, name)) as f:
+        return json.load(f)
+
+
+def shape_cells(payload, shape):
+    w = payload['width']
+    return [(p // w, p % w) for p in shape['points']]
+
+
+def apply_shape(grid, payload, shape, row, col):
+    w, h, k = payload['width'], payload['height'], payload['numStates']
+    g = list(grid)
+    for dr, dc in shape_cells(payload, shape):
+        r, c = row + dr, col + dc
+        assert 0 <= r < h and 0 <= c < w, 'placement out of bounds'
+        g[r * w + c] = (g[r * w + c] + 1) % k
+    return g
 
 
 def check_level(name):
-    d = load(name)
-    resp = post_json('/solve', page.to_payload(d))
+    payload = load(name)
+    resp = post_json('/solve', payload)
     assert resp['solved'], f'server returned no solution: {resp}'
     placements = {s['shapeId']: (s['row'], s['col']) for s in resp['steps']}
-    cur = [row[:] for row in d['grid']]
-    for i, shape in enumerate(d['shapes']):
-        r_off, c_off = placements[i]
-        cur = page.apply_shape(cur, shape, r_off, c_off, d['states'])
-        assert cur is not None, f'shape {i} out of bounds'
-    assert page.all_goal(cur, d['goal']), 'grid not at goal'
+    grid = payload['grid']
+    for shape in payload['shapes']:
+        row, col = placements[shape['id']]
+        grid = apply_shape(grid, payload, shape, row, col)
+    assert all(v == payload['goal'] for v in grid), 'grid not at goal'
     print(f'{name}: solved in {resp["ms"]}ms over HTTP, VERIFIED')
 
 
@@ -48,26 +60,28 @@ def walk_level(name):
     """Simulate the full gameplay loop in the game's FORCED order: place the
     active shape where the server says, re-request with the remaining
     shapes, expect cache hits, and end exactly at the goal."""
-    d = load(name)
-    states = d['states']
-    grid = [row[:] for row in d['grid']]
-    shapes = list(d['shapes'])
+    payload = load(name)
+    grid = payload['grid']
+    shapes = list(payload['shapes'])
     hits = misses = 0
     while shapes:
-        payload = page.to_payload(
-            {'grid': grid, 'states': states, 'goal': d['goal'], 'shapes': shapes})
-        resp = post_json('/solve', payload)
+        req = {
+            'width': payload['width'], 'height': payload['height'],
+            'grid': grid, 'goal': payload['goal'],
+            'numStates': payload['numStates'],
+            'shapes': [{'id': i, 'points': s['points']}
+                       for i, s in enumerate(shapes)],
+        }
+        resp = post_json('/solve', req)
         assert resp['solved'], f'no solution with {len(shapes)} shapes left'
         if resp.get('cached'):
             hits += 1
         else:
             misses += 1
         step = next(s for s in resp['steps'] if s['shapeId'] == 0)
-        grid = page.apply_shape(grid, shapes[0], step['row'], step['col'],
-                                states)
-        assert grid is not None, 'active placement out of bounds'
+        grid = apply_shape(grid, payload, shapes[0], step['row'], step['col'])
         shapes = shapes[1:]
-    assert page.all_goal(grid, d['goal']), 'walk did not end at goal'
+    assert all(v == payload['goal'] for v in grid), 'walk did not end at goal'
     assert misses == 1, f'expected exactly 1 fresh solve, got {misses}'
     print(f'{name}: walked to goal in forced order'
           f' ({misses} solve, {hits} cache hits)')
@@ -77,9 +91,9 @@ if __name__ == '__main__':
     with urllib.request.urlopen(SERVER + '/health', timeout=5) as r:
         assert json.loads(r.read())['status'] == 'ok'
     print('health: ok')
-    check_level('sample_6x6_board_12_pieces_level_31.html')
-    check_level('sample_7x8_board_18_pieces_level_48.html')
-    check_level('sample_level_96.html')
-    walk_level('sample_6x6_board_12_pieces_level_31.html')
-    walk_level('sample_level_96.html')
+    check_level('level_31.json')
+    check_level('level_48.json')
+    check_level('level_96.json')
+    walk_level('level_31.json')
+    walk_level('level_96.json')
     print('All server tests passed.')

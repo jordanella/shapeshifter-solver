@@ -1,19 +1,38 @@
 // ==UserScript==
 // @name         Neopets Shapeshifter Solver
 // @namespace    shapeshifter-solver
-// @version      1.4
+// @version      1.5
 // @description  Parses the Shapeshifter board, solves via local solver-core server, highlights where to click, and locks the board (and only the board) except the target cell.
 // @match        *://www.neopets.com/medieval/shapeshifter.phtml*
 // @match        *://www.neopets.com/medieval/process_shapeshifter.phtml*
 // @grant        GM_xmlhttpRequest
+// @grant        GM_getValue
+// @grant        GM_setValue
+// @grant        GM_registerMenuCommand
 // @connect      127.0.0.1
+// @connect      localhost
 // @run-at       document-idle
 // ==/UserScript==
 
 (function () {
     'use strict';
 
-    const SERVER = 'http://127.0.0.1:8977';
+    // Server address lives in userscript storage; change it from the
+    // Tampermonkey menu ("Set solver server address"). Hosts other than
+    // 127.0.0.1/localhost also need a matching @connect line above.
+    const DEFAULT_SERVER = 'http://127.0.0.1:8977';
+    const SERVER = (typeof GM_getValue === 'function')
+        ? GM_getValue('server', DEFAULT_SERVER)
+        : DEFAULT_SERVER;
+    if (typeof GM_registerMenuCommand === 'function') {
+        GM_registerMenuCommand('Set solver server address', () => {
+            const v = prompt('Solver server address:', SERVER);
+            if (v) {
+                GM_setValue('server', v.replace(/\/+$/, ''));
+                location.reload();
+            }
+        });
+    }
 
     // ------------------------------------------------------------------
     // Status box
@@ -37,7 +56,7 @@
     };
 
     // ------------------------------------------------------------------
-    // Parse the page (same patterns as the Python parser)
+    // Parse the page (same patterns as tools/shapeshifter_page.py)
     // ------------------------------------------------------------------
     function parsePage() {
         const html = document.documentElement.innerHTML;
@@ -174,7 +193,7 @@
     // Board-only lockdown: every grid cell except the target is unclickable
     // and dimmed (the shape preview stays bright). The first click on the
     // target arms a one-shot latch so a double click can't submit twice.
-    // Everything off the board â€” navigation, forms â€” is left untouched.
+    // Everything off the board (navigation, forms) is left untouched.
     function lockdown(target, footprint) {
         let submitted = false;
         const guard = (e) => {
@@ -183,13 +202,13 @@
             if (submitted) {
                 e.preventDefault();
                 e.stopImmediatePropagation();
-                setStatus('already placed â€” waiting for reload', '#e6a23c', true);
+                setStatus('already placed - waiting for reload', '#e6a23c', true);
                 return;
             }
             if (a !== target) {
                 e.preventDefault();
                 e.stopImmediatePropagation();
-                setStatus('locked â€” click the red cell', '#e6a23c', true);
+                setStatus('locked - click the red cell', '#e6a23c', true);
                 return;
             }
             submitted = true;
@@ -227,7 +246,7 @@
             try { data = JSON.parse(resp.responseText); }
             catch { setStatus('bad server response', '#ff3b30'); return; }
             if (!data.solved) {
-                setStatus('no solution found â€” parse bug or unwinnable board?', '#ff3b30');
+                setStatus('no solution found - parse bug or unwinnable board?', '#ff3b30');
                 return;
             }
             const step = data.steps.find(s => s.shapeId === 0);
@@ -243,7 +262,8 @@
                 ` ${n} shapes left)`, '#46e04a');
         },
         onerror() {
-            setStatus('server unreachable â€” run: solver-core.exe serve', '#ff3b30');
+            setStatus(`server unreachable at ${SERVER} - run: solver-core serve`,
+                '#ff3b30');
         },
         ontimeout() {
             setStatus('solver timed out', '#ff3b30');

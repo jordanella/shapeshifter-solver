@@ -8,16 +8,17 @@ const fs = require('fs');
 const http = require('http');
 const path = require('path');
 const { JSDOM, VirtualConsole } = require('jsdom');
-const { parseHtml } = require('./parse');
+const { renderPage } = require('./render_page');
 
-const FIXTURE = path.join(__dirname, '..', 'fixtures',
-    'sample_6x6_board_12_pieces_level_31.html');
+const FIXTURE = path.join(__dirname, '..', 'fixtures', 'level_31.json');
 const USERSCRIPT = path.join(__dirname, '..', '..', 'userscript',
     'shapeshifter-solver.user.js');
 
-const html = fs.readFileSync(FIXTURE, 'utf8');
+const payload = JSON.parse(fs.readFileSync(FIXTURE, 'utf8'));
+const html = renderPage(payload);
 const script = fs.readFileSync(USERSCRIPT, 'utf8');
-const parsed = parseHtml(html);
+const shapePoints = payload.shapes.map(s =>
+    s.points.map(p => [Math.floor(p / payload.width), p % payload.width]));
 
 const vc = new VirtualConsole(); // swallow jsdom "not implemented: navigation"
 const dom = new JSDOM(html, {
@@ -86,7 +87,7 @@ function runAssertions() {
     // EVERY footprint cell must be highlighted: green, or red for the
     // target itself. This covers margin (javascript:;) cells too.
     let marginGreens = 0;
-    for (const [dr, dc] of parsed.shapePoints[0]) {
+    for (const [dr, dc] of shapePoints[0]) {
         const cell = cellAt(step.col + dc, step.row + dr);
         assert(cell, `footprint cell (${step.row + dr},${step.col + dc}) exists`);
         const img = cell.querySelector('img');
