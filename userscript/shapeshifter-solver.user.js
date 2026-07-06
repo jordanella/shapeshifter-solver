@@ -1,14 +1,13 @@
 // ==UserScript==
 // @name         Neopets Shapeshifter Solver
 // @namespace    shapeshifter-solver
-// @version      1.5
+// @version      1.6
 // @description  Parses the Shapeshifter board, solves via local solver-core server, highlights where to click, and locks the board (and only the board) except the target cell.
 // @match        *://www.neopets.com/medieval/shapeshifter.phtml*
 // @match        *://www.neopets.com/medieval/process_shapeshifter.phtml*
 // @grant        GM_xmlhttpRequest
 // @grant        GM_getValue
 // @grant        GM_setValue
-// @grant        GM_registerMenuCommand
 // @connect      127.0.0.1
 // @connect      localhost
 // @run-at       document-idle
@@ -17,41 +16,67 @@
 (function () {
     'use strict';
 
-    // Server address lives in userscript storage; change it from the
-    // Tampermonkey menu ("Set solver server address"). Hosts other than
-    // 127.0.0.1/localhost also need a matching @connect line above.
+    // Server address lives in userscript storage and is editable directly
+    // in the status box. Hosts other than 127.0.0.1/localhost also need a
+    // matching @connect line above.
     const DEFAULT_SERVER = 'http://127.0.0.1:8977';
     const SERVER = (typeof GM_getValue === 'function')
         ? GM_getValue('server', DEFAULT_SERVER)
         : DEFAULT_SERVER;
-    if (typeof GM_registerMenuCommand === 'function') {
-        GM_registerMenuCommand('Set solver server address', () => {
-            const v = prompt('Solver server address:', SERVER);
-            if (v) {
-                GM_setValue('server', v.replace(/\/+$/, ''));
-                location.reload();
-            }
-        });
-    }
 
     // ------------------------------------------------------------------
-    // Status box
+    // Status box (message + editable server address)
     // ------------------------------------------------------------------
     const box = document.createElement('div');
     box.style.cssText =
         'position:fixed;top:12px;right:12px;z-index:99999;padding:10px 14px;' +
         'background:#1e1e28;color:#eee;font:13px/1.5 monospace;border-radius:8px;' +
         'box-shadow:0 2px 12px rgba(0,0,0,.5);max-width:320px;';
+    const msgEl = document.createElement('div');
+    box.appendChild(msgEl);
+
+    const cfgRow = document.createElement('div');
+    cfgRow.style.cssText =
+        'margin-top:6px;display:flex;gap:6px;align-items:center;';
+    const cfgLabel = document.createElement('span');
+    cfgLabel.textContent = 'server';
+    cfgLabel.style.cssText = 'font-size:11px;color:#9a9aa5;';
+    const cfgInput = document.createElement('input');
+    cfgInput.type = 'text';
+    cfgInput.value = SERVER;
+    cfgInput.placeholder = DEFAULT_SERVER;
+    cfgInput.style.cssText =
+        'flex:1;min-width:170px;background:#2a2a36;color:#eee;' +
+        'border:1px solid #444;border-radius:4px;font:11px monospace;' +
+        'padding:2px 6px;';
+    const cfgSave = document.createElement('button');
+    cfgSave.textContent = 'set';
+    cfgSave.style.cssText =
+        'background:#3a3a48;color:#eee;border:1px solid #555;' +
+        'border-radius:4px;font:11px monospace;padding:2px 8px;cursor:pointer;';
+    const saveServer = () => {
+        const v = cfgInput.value.trim().replace(/\/+$/, '');
+        if (!v || v === SERVER) return;
+        if (typeof GM_setValue === 'function') GM_setValue('server', v);
+        location.reload();
+    };
+    cfgSave.addEventListener('click', saveServer);
+    cfgInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') saveServer();
+    });
+    cfgRow.append(cfgLabel, cfgInput, cfgSave);
+    box.appendChild(cfgRow);
+
     let mainMsg = '';
     let flashTimer = null;
     const setStatus = (msg, color, transient) => {
         if (!transient) mainMsg = 'Shapeshifter: ' + msg;
-        box.textContent = transient ? 'Shapeshifter: ' + msg : mainMsg;
+        msgEl.textContent = transient ? 'Shapeshifter: ' + msg : mainMsg;
         box.style.borderLeft = '5px solid ' + (color || '#888');
         if (!box.parentNode) document.body.appendChild(box);
         if (transient) {
             clearTimeout(flashTimer);
-            flashTimer = setTimeout(() => { box.textContent = mainMsg; }, 1400);
+            flashTimer = setTimeout(() => { msgEl.textContent = mainMsg; }, 1400);
         }
     };
 

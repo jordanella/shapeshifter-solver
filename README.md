@@ -40,10 +40,11 @@ python tools/solve_page.py level.html     # solve a saved page in one step
 python tools/export_level.py a.html a.json  # just the HTML -> JSON export
 ```
 
-The userscript's server address is stored in Tampermonkey storage
-(default `http://127.0.0.1:8977`) — change it via the Tampermonkey menu
-entry "Set solver server address". Hosts other than 127.0.0.1/localhost
-also need a matching `@connect` line in the script header.
+The userscript's server address (default `http://127.0.0.1:8977`) is
+editable directly in the on-page status box — type the address and press
+Enter or "set"; it persists in Tampermonkey storage. Hosts other than
+127.0.0.1/localhost also need a matching `@connect` line in the script
+header.
 
 ## The solver
 
