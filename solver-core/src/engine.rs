@@ -1,7 +1,7 @@
 //! Bitplane DFS engine.
 //!
 //! Works in deficit space: the grid becomes k bitset planes, where
-//! plane\[v\] holds the cells that still need v more increments. Placing a
+//! `plane[v]` holds the cells that still need v more increments. Placing a
 //! shape rotates the planes down by one under the shape's mask — no
 //! per-cell loops — and states are small word arrays, cheap to snapshot
 //! per depth (no undo pass).

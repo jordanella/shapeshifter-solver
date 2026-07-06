@@ -73,18 +73,10 @@ Measured on a 24-thread desktop, saved real levels:
 |---|---|---|---|
 | 31 | 6x6, 2 states, 12 shapes | 0.013 s | 0.04 s |
 | 48 | 8x7, 3 states, 18 shapes | **0.9 s** | 14.6 s |
-| 96 | 14x13, 5 states, 26 shapes | **0.006 s** | — |
 | 100 | 14x14, 5 states, 36 shapes | **29 s** | 244 s |
 
 \* the classic per-cell largest-first budget DFS (Kvho's algorithm, as
 ported by Bakeru), same machine.
-
-Ideas benchmarked and *rejected* on evidence, so you don't have to try
-them: failed-state memoization (~0% hit rate — a fixed shape order admits
-no transpositions), endgame tables (the search tree is mid-heavy; arrivals
-at tail depths are too rare to pay for the table), and shape-order
-portfolios (canonical largest-first is already near-optimal for the budget
-prune).
 
 ## The userscript
 
@@ -147,8 +139,7 @@ service, and the userscript client.
 
 ## Disclaimer
 
-This is assistance tooling for a single-player puzzle: it annotates and it
-refuses to play for you. Whether to use helpers on Neopets is between you
+This is assistance tooling for a single-player puzzle: it parses, solves, and annotates the solution but applying it is up to you. Whether to use helpers on Neopets is between you
 and the site's terms of service.
 
 ## License
