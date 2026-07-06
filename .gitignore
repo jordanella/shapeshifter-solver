@@ -1,0 +1,7 @@
+# build artifacts
+target/
+node_modules/
+__pycache__/
+
+# machine-specific linker pin (see README: Building on Windows)
+solver-core/.cargo/config.toml

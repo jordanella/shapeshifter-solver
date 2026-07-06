@@ -1,0 +1,9 @@
+{
+  "name": "shapeshifter-solver-dom-tests",
+  "private": true,
+  "version": "1.0.0",
+  "description": "jsdom tests for the Shapeshifter solver userscript",
+  "dependencies": {
+    "jsdom": "^25.0.0"
+  }
+}
