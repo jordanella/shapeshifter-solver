@@ -68,16 +68,24 @@ re-simulated in the game's forced order before being returned.
 
 ### Benchmarks
 
-Measured on a 24-thread desktop, saved real levels:
+Specific saved instances, measured on a 24-thread desktop:
 
-| Level | Board | This solver | Reference C-style DFS* |
+| Instance | Board | This solver | Reference C-style DFS* |
 |---|---|---|---|
-| 31 | 6x6, 2 states, 12 shapes | 0.013 s | 0.04 s |
-| 48 | 8x7, 3 states, 18 shapes | **0.9 s** | 14.6 s |
-| 100 | 14x14, 5 states, 36 shapes | **29 s** | 244 s |
+| level 31 | 6x6, 2 states, 12 shapes | 0.013 s | 0.04 s |
+| level 48 | 8x7, 3 states, 18 shapes | **0.9 s** | 14.6 s |
+| level 100 | 14x14, 5 states, 36 shapes | **29 s** | 244 s |
 
 \* the classic per-cell largest-first budget DFS (Kvho's algorithm, as
 ported by Bakeru), same machine.
+
+**These are per-instance numbers, not per-level guarantees.** Solve time
+is heavy-tailed and driven by the instance's wrap budget
+(`(squares − deficits) / k`) and shape mix, not the level number — the
+level 96/100 fixtures above rolled unusually tight budgets. Random
+instances at level-100 dimensions routinely exceed 90 s on the same
+machine. Deep boards can be slow; the trajectory cache means you pay that
+cost once per level, not per placement.
 
 ## The userscript
 
