@@ -148,8 +148,9 @@ service, and the userscript client.
 
 ## Disclaimer
 
-This is assistance tooling for a single-player puzzle: it parses, solves, and annotates the solution but applying it is up to you. Whether to use helpers on Neopets is between you
-and the site's terms of service.
+This is assistance tooling for a single-player puzzle: it parses, solves, and
+annotates the solution but applying it is up to you. Whether to use helpers on
+Neopets is between you and the site's terms of service.
 
 ## License
 

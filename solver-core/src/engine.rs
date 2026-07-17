@@ -37,12 +37,22 @@ pub struct Stats {
 }
 
 pub fn solve(input: &SolverInput) -> (Option<Vec<SolutionStep>>, Stats) {
+    solve_observed(input, &AtomicU64::new(0))
+}
+
+/// Like [`solve`], but workers flush their node counts into `live` roughly
+/// every 4096 nodes, so a monitor thread can report progress during long
+/// solves.
+pub fn solve_observed(
+    input: &SolverInput,
+    live: &AtomicU64,
+) -> (Option<Vec<SolutionStep>>, Stats) {
     let cells = input.width * input.height;
     match cells.div_ceil(64) {
-        1 => run::<1>(input),
-        2 => run::<2>(input),
-        3 => run::<3>(input),
-        4 => run::<4>(input),
+        1 => run::<1>(input, live),
+        2 => run::<2>(input, live),
+        3 => run::<3>(input, live),
+        4 => run::<4>(input, live),
         _ => panic!("grid larger than 256 cells"),
     }
 }
@@ -165,7 +175,10 @@ fn build_ctx<const W: usize>(input: &SolverInput, order: &[usize], k: usize) -> 
     Ctx { k, ns, shapes, cap_lt, cap_active }
 }
 
-fn run<const W: usize>(input: &SolverInput) -> (Option<Vec<SolutionStep>>, Stats) {
+fn run<const W: usize>(
+    input: &SolverInput,
+    live: &AtomicU64,
+) -> (Option<Vec<SolutionStep>>, Stats) {
     let k = effective_k(input);
     let goal = input.goal as usize;
     let ns = input.shapes.len();
@@ -206,7 +219,7 @@ fn run<const W: usize>(input: &SolverInput) -> (Option<Vec<SolutionStep>>, Stats
         bud[0] = budget0;
         let mut seq = vec![0usize; ns];
         let stop = AtomicBool::new(false);
-        let found = dfs(&ctx, &mut planes, &mut bud, &mut seq, 0, &mut stats, &stop);
+        let found = dfs(&ctx, &mut planes, &mut bud, &mut seq, 0, &mut stats, &stop, live);
         let result = found.then(|| build_steps(&ctx, &seq));
         return (check_solution(input, result, k), stats);
     }
@@ -250,7 +263,7 @@ fn run<const W: usize>(input: &SolverInput) -> (Option<Vec<SolutionStep>>, Stats
                     planes[depth].copy_from_slice(&p.planes);
                     bud[depth] = p.bud;
                     seq[..depth].copy_from_slice(&p.seq);
-                    if dfs(&ctx, &mut planes, &mut bud, &mut seq, depth, &mut local, &stop) {
+                    if dfs(&ctx, &mut planes, &mut bud, &mut seq, depth, &mut local, &stop, live) {
                         *solution.lock().unwrap() = Some(seq.clone());
                         stop.store(true, Ordering::Relaxed);
                         break;
@@ -336,6 +349,7 @@ fn enum_prefixes<const W: usize>(
 
 /// DFS from `floor` to the last shape. On success returns true with the
 /// full placement in `seq`. Backtracking never rises above `floor`.
+#[allow(clippy::too_many_arguments)]
 fn dfs<const W: usize>(
     ctx: &Ctx<W>,
     planes: &mut [Vec<[u64; W]>],
@@ -344,6 +358,7 @@ fn dfs<const W: usize>(
     floor: usize,
     stats: &mut Stats,
     stop: &AtomicBool,
+    live: &AtomicU64,
 ) -> bool {
     let k = ctx.k;
     let ns = ctx.ns;
@@ -355,10 +370,11 @@ fn dfs<const W: usize>(
 
     loop {
         stats.nodes += 1;
-        if stats.nodes & 4095 == 0
-            && (CANCEL_FLAG.load(Ordering::Relaxed) || stop.load(Ordering::Relaxed))
-        {
-            return false;
+        if stats.nodes & 4095 == 0 {
+            live.fetch_add(4096, Ordering::Relaxed);
+            if CANCEL_FLAG.load(Ordering::Relaxed) || stop.load(Ordering::Relaxed) {
+                return false;
+            }
         }
 
         let mut dead = false;

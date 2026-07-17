@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Neopets Shapeshifter Solver
 // @namespace    shapeshifter-solver
-// @version      1.6
+// @version      1.7
 // @description  Parses the Shapeshifter board, solves via local solver-core server, highlights where to click, and locks the board (and only the board) except the target cell.
 // @match        *://www.neopets.com/medieval/shapeshifter.phtml*
 // @match        *://www.neopets.com/medieval/process_shapeshifter.phtml*
@@ -260,6 +260,14 @@
     const n = parsed.payload.shapes.length;
     setStatus(`solving (${n} shapes left)...`, '#e6a23c');
 
+    // Deep boards can take minutes on a fresh solve: tick the elapsed time
+    // so a long wait is visibly a working solver, not a hang.
+    const t0 = Date.now();
+    const solvingTick = setInterval(() => {
+        const secs = Math.round((Date.now() - t0) / 1000);
+        setStatus(`solving (${n} shapes left)... ${secs}s`, '#e6a23c');
+    }, 1000);
+
     GM_xmlhttpRequest({
         method: 'POST',
         url: SERVER + '/solve',
@@ -267,6 +275,7 @@
         data: JSON.stringify(parsed.payload),
         timeout: 300000,
         onload(resp) {
+            clearInterval(solvingTick);
             let data;
             try { data = JSON.parse(resp.responseText); }
             catch { setStatus('bad server response', '#ff3b30'); return; }
@@ -287,10 +296,12 @@
                 ` ${n} shapes left)`, '#46e04a');
         },
         onerror() {
+            clearInterval(solvingTick);
             setStatus(`server unreachable at ${SERVER} - run: solver-core serve`,
                 '#ff3b30');
         },
         ontimeout() {
+            clearInterval(solvingTick);
             setStatus('solver timed out', '#ff3b30');
         },
     });

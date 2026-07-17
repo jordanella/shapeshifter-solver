@@ -1,8 +1,41 @@
-use std::time::Instant;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::time::{Duration, Instant};
 
 use solver_core::{SolutionStep, SolverInput};
 
 const DEFAULT_PORT: u16 = 8977;
+
+/// Run a solve with a console heartbeat: from 5 seconds in, prints elapsed
+/// time and live node throughput every 5 seconds so long solves are
+/// visibly alive.
+fn solve_with_heartbeat(input: &SolverInput) -> (Option<Vec<SolutionStep>>, solver_core::engine::Stats) {
+    let live = AtomicU64::new(0);
+    let done = AtomicBool::new(false);
+    let t0 = Instant::now();
+    std::thread::scope(|s| {
+        s.spawn(|| {
+            let mut next = 5u64;
+            loop {
+                std::thread::sleep(Duration::from_millis(250));
+                if done.load(Ordering::Relaxed) {
+                    break;
+                }
+                let el = t0.elapsed().as_secs();
+                if el >= next {
+                    let nodes = live.load(Ordering::Relaxed);
+                    let rate = nodes as f64 / t0.elapsed().as_secs_f64() / 1e6;
+                    println!(
+                        "  ... {el}s elapsed, {nodes} nodes ({rate:.0}M/s), still searching"
+                    );
+                    next += 5;
+                }
+            }
+        });
+        let r = solver_core::engine::solve_observed(input, &live);
+        done.store(true, Ordering::Relaxed);
+        r
+    })
+}
 
 fn main() {
     let mut args = std::env::args().skip(1);
@@ -21,8 +54,12 @@ fn main() {
 
     let data = std::fs::read_to_string(&first).expect("read input file");
     let input: SolverInput = serde_json::from_str(&data).expect("parse input JSON");
+    println!(
+        "solving {}x{}, {} states, {} shapes ...",
+        input.height, input.width, effective_k(&input), input.shapes.len()
+    );
     let t0 = Instant::now();
-    let (result, stats) = solver_core::engine::solve(&input);
+    let (result, stats) = solve_with_heartbeat(&input);
     let dt = t0.elapsed().as_secs_f64();
     match result {
         Some(steps) => {
@@ -208,13 +245,13 @@ fn serve(port: u16) {
                                     .to_string(),
                                 )
                             } else {
-                                print!("solve {level} ... ");
+                                println!("solve {level} ...");
                                 let t0 = Instant::now();
-                                let (result, stats) = solver_core::engine::solve(&input);
+                                let (result, stats) = solve_with_heartbeat(&input);
                                 let ms = t0.elapsed().as_millis() as u64;
                                 match result {
                                     Some(steps) => {
-                                        println!("solved in {ms}ms ({} nodes)", stats.nodes);
+                                        println!("  -> solved in {ms}ms ({} nodes)", stats.nodes);
                                         cache = Some(build_cache(&input, &steps));
                                         let steps_json: Vec<_> = steps
                                             .iter()
@@ -239,7 +276,7 @@ fn serve(port: u16) {
                                         )
                                     }
                                     None => {
-                                        println!("NO SOLUTION in {ms}ms");
+                                        println!("  -> NO SOLUTION in {ms}ms");
                                         json_response(
                                             200,
                                             serde_json::json!({
