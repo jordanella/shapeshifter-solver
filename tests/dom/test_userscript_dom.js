@@ -28,9 +28,11 @@ const dom = new JSDOM(html, {
 });
 const { window } = dom;
 
+const SERVER = process.env.SOLVER_URL || 'http://127.0.0.1:8977';
+
 let solveResponse = null;
 window.GM_xmlhttpRequest = (opts) => {
-    const req = http.request('http://127.0.0.1:8977/solve', {
+    const req = http.request(SERVER + '/solve', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
     }, (res) => {
@@ -78,6 +80,17 @@ function runAssertions() {
         .map(d => d.textContent).find(t => t && t.includes('Shapeshifter:'));
     assert(boxText && boxText.includes(`row ${step.row}, col ${step.col}`),
         `status box shows placement (row ${step.row}, col ${step.col})`);
+
+    // Budget forecast: independently recompute (squares - deficits) / k
+    const squares = payload.shapes.reduce((t, s) => t + s.points.length, 0);
+    const deficit = payload.grid.reduce(
+        (t, v) => t + (((payload.goal - v) % payload.numStates) + payload.numStates)
+            % payload.numStates, 0);
+    const budget = (squares - deficit) / payload.numStates;
+    const infoText = [...window.document.querySelectorAll('div')]
+        .map(d => d.textContent).find(t => t && t.includes('wraps'));
+    assert(infoText && infoText.includes(`budget ${budget} wraps`),
+        `status box shows wrap budget (${budget})`);
 
     const target = cellAt(step.col, step.row);
     assert(target, 'target cell exists');

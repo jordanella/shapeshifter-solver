@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Neopets Shapeshifter Solver
 // @namespace    shapeshifter-solver
-// @version      1.7
+// @version      1.8
 // @description  Parses the Shapeshifter board, solves via local solver-core server, highlights where to click, and locks the board (and only the board) except the target cell.
 // @match        *://www.neopets.com/medieval/shapeshifter.phtml*
 // @match        *://www.neopets.com/medieval/process_shapeshifter.phtml*
@@ -34,6 +34,13 @@
         'box-shadow:0 2px 12px rgba(0,0,0,.5);max-width:320px;';
     const msgEl = document.createElement('div');
     box.appendChild(msgEl);
+
+    // Instance difficulty forecast: the wrap budget governs how much the
+    // solver's main prune can cut. Fat budgets (especially on 3-state
+    // boards) tend to be slow — restarting the level rerolls the instance.
+    const infoEl = document.createElement('div');
+    infoEl.style.cssText = 'font-size:11px;color:#9a9aa5;margin-top:2px;';
+    box.appendChild(infoEl);
 
     const cfgRow = document.createElement('div');
     cfgRow.style.cssText =
@@ -258,6 +265,21 @@
     if (!parsed) return; // not a solvable board view
 
     const n = parsed.payload.shapes.length;
+
+    // Wrap budget = (squares - deficits) / k; every solution overshoots by
+    // exactly this many full state cycles. A signal, not a guarantee: fat
+    // budgets are usually slow, tight ones are merely not doomed.
+    {
+        const p = parsed.payload;
+        const squares = p.shapes.reduce((t, s) => t + s.points.length, 0);
+        const deficit = p.grid.reduce(
+            (t, v) => t + (((p.goal - v) % p.numStates) + p.numStates) % p.numStates, 0);
+        const over = squares - deficit;
+        infoEl.textContent = (over >= 0 && over % p.numStates === 0)
+            ? `budget ${over / p.numStates} wraps · ${squares} squares · ${deficit} deficit`
+            : 'budget invalid — parse problem?';
+    }
+
     setStatus(`solving (${n} shapes left)...`, '#e6a23c');
 
     // Deep boards can take minutes on a fresh solve: tick the elapsed time
