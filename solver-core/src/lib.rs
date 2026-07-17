@@ -13,7 +13,7 @@ use std::sync::atomic::AtomicBool;
 /// Cooperative cancellation for embedders: set true to abort a running solve.
 pub static CANCEL_FLAG: AtomicBool = AtomicBool::new(false);
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SolverInput {
     pub width: usize,
@@ -30,7 +30,7 @@ pub struct SolverInput {
     pub shapes: Vec<ShapeData>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ShapeData {
     pub id: usize,

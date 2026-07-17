@@ -1,40 +1,55 @@
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use solver_core::{SolutionStep, SolverInput};
 
 const DEFAULT_PORT: u16 = 8977;
 
-/// Run a solve with a console heartbeat: from 5 seconds in, prints elapsed
-/// time and live node throughput every 5 seconds so long solves are
-/// visibly alive.
-fn solve_with_heartbeat(input: &SolverInput) -> (Option<Vec<SolutionStep>>, solver_core::engine::Stats) {
-    let live = AtomicU64::new(0);
-    let done = AtomicBool::new(false);
-    let t0 = Instant::now();
-    std::thread::scope(|s| {
-        s.spawn(|| {
-            let mut next = 5u64;
-            loop {
-                std::thread::sleep(Duration::from_millis(250));
-                if done.load(Ordering::Relaxed) {
-                    break;
-                }
-                let el = t0.elapsed().as_secs();
-                if el >= next {
-                    let nodes = live.load(Ordering::Relaxed);
-                    let rate = nodes as f64 / t0.elapsed().as_secs_f64() / 1e6;
-                    println!(
-                        "  ... {el}s elapsed, {nodes} nodes ({rate:.0}M/s), still searching"
-                    );
-                    next += 5;
-                }
+/// A single long-lived monitor thread prints heartbeats for whichever
+/// solve is currently registered: from 5 seconds in, elapsed time and live
+/// node throughput every 5 seconds. Registering a solve costs two mutex
+/// ops, so fast solves pay nothing (a per-solve monitor thread measured a
+/// ~250 ms latency floor on every solve).
+struct HeartbeatSlot {
+    t0: Instant,
+    live: Arc<AtomicU64>,
+    next: u64,
+}
+
+fn start_heartbeat_monitor() -> Arc<Mutex<Option<HeartbeatSlot>>> {
+    let slot: Arc<Mutex<Option<HeartbeatSlot>>> = Arc::new(Mutex::new(None));
+    let watched = Arc::clone(&slot);
+    std::thread::spawn(move || loop {
+        std::thread::sleep(Duration::from_millis(500));
+        if let Some(hb) = &mut *watched.lock().unwrap() {
+            let el = hb.t0.elapsed().as_secs();
+            if el >= hb.next {
+                let nodes = hb.live.load(Ordering::Relaxed);
+                let rate = nodes as f64 / hb.t0.elapsed().as_secs_f64() / 1e6;
+                println!(
+                    "  ... {el}s elapsed, {nodes} nodes ({rate:.0}M/s), still searching"
+                );
+                hb.next += 5;
             }
-        });
-        let r = solver_core::engine::solve_observed(input, &live);
-        done.store(true, Ordering::Relaxed);
-        r
-    })
+        }
+    });
+    slot
+}
+
+fn solve_with_heartbeat(
+    input: &SolverInput,
+    monitor: &Mutex<Option<HeartbeatSlot>>,
+) -> (Option<Vec<SolutionStep>>, solver_core::engine::Stats) {
+    let live = Arc::new(AtomicU64::new(0));
+    *monitor.lock().unwrap() = Some(HeartbeatSlot {
+        t0: Instant::now(),
+        live: Arc::clone(&live),
+        next: 5,
+    });
+    let r = solver_core::engine::solve_observed(input, &live);
+    *monitor.lock().unwrap() = None;
+    r
 }
 
 fn main() {
@@ -58,8 +73,9 @@ fn main() {
         "solving {}x{}, {} states, {} shapes ...",
         input.height, input.width, effective_k(&input), input.shapes.len()
     );
+    let monitor = start_heartbeat_monitor();
     let t0 = Instant::now();
-    let (result, stats) = solve_with_heartbeat(&input);
+    let (result, stats) = solve_with_heartbeat(&input, &monitor);
     let dt = t0.elapsed().as_secs_f64();
     match result {
         Some(steps) => {
@@ -197,6 +213,75 @@ fn json_response(status: u32, body: String) -> tiny_http::Response<std::io::Curs
     resp
 }
 
+/// A solve running on a worker thread. `waiter` holds the request to
+/// answer when it finishes; a re-request of the same board swaps itself in
+/// there. `cancelled` distinguishes an aborted search from a genuine
+/// no-solution result.
+struct InFlight {
+    input: SolverInput,
+    waiter: Arc<Mutex<Option<tiny_http::Request>>>,
+    cancelled: Arc<AtomicBool>,
+    handle: std::thread::JoinHandle<()>,
+}
+
+fn spawn_solve(
+    input: SolverInput,
+    request: tiny_http::Request,
+    cache: Arc<Mutex<Option<Cache>>>,
+    monitor: Arc<Mutex<Option<HeartbeatSlot>>>,
+) -> InFlight {
+    let waiter = Arc::new(Mutex::new(Some(request)));
+    let cancelled = Arc::new(AtomicBool::new(false));
+    let w = Arc::clone(&waiter);
+    let c = Arc::clone(&cancelled);
+    let inp = input.clone();
+    let handle = std::thread::spawn(move || {
+        let level = format!(
+            "{}x{}, {} states, {} shapes",
+            inp.height, inp.width, effective_k(&inp), inp.shapes.len()
+        );
+        println!("solve {level} ...");
+        let t0 = Instant::now();
+        let (result, stats) = solve_with_heartbeat(&inp, &monitor);
+        let ms = t0.elapsed().as_millis() as u64;
+        let body = match result {
+            Some(steps) => {
+                println!("  -> solved in {ms}ms ({} nodes)", stats.nodes);
+                *cache.lock().unwrap() = Some(build_cache(&inp, &steps));
+                let steps_json: Vec<_> = steps
+                    .iter()
+                    .map(|s| {
+                        serde_json::json!({
+                            "shapeId": s.original_shape_id,
+                            "row": s.placement_y,
+                            "col": s.placement_x,
+                        })
+                    })
+                    .collect();
+                serde_json::json!({
+                    "solved": true,
+                    "steps": steps_json,
+                    "ms": ms,
+                    "nodes": stats.nodes,
+                    "cached": false,
+                })
+            }
+            None if c.load(Ordering::Relaxed) => {
+                println!("  -> cancelled after {ms}ms (superseded by a new board)");
+                serde_json::json!({ "solved": false, "cancelled": true, "ms": ms })
+            }
+            None => {
+                println!("  -> NO SOLUTION in {ms}ms");
+                serde_json::json!({ "solved": false, "ms": ms, "nodes": stats.nodes })
+            }
+        };
+        if let Some(req) = w.lock().unwrap().take() {
+            let _ = req.respond(json_response(200, body.to_string()));
+        }
+    });
+    InFlight { input, waiter, cancelled, handle }
+}
+
 fn serve(port: u16) {
     let server = tiny_http::Server::http(("127.0.0.1", port))
         .unwrap_or_else(|e| panic!("cannot bind 127.0.0.1:{port}: {e}"));
@@ -204,98 +289,118 @@ fn serve(port: u16) {
     println!("  POST /solve  {{width, height, grid, goal, numStates, shapes}}");
     println!("  GET  /health");
 
-    let mut cache: Option<Cache> = None;
+    let cache: Arc<Mutex<Option<Cache>>> = Arc::new(Mutex::new(None));
+    let monitor = start_heartbeat_monitor();
+    let mut in_flight: Option<InFlight> = None;
+
     for mut request in server.incoming_requests() {
+        // Reap a finished worker so its slot frees up
+        if in_flight.as_ref().is_some_and(|f| f.handle.is_finished()) {
+            let _ = in_flight.take().unwrap().handle.join();
+        }
+
         let url = request.url().to_string();
         let method = request.method().clone();
 
-        let response = match (method, url.as_str()) {
-            (tiny_http::Method::Options, _) => json_response(204, String::new()),
+        match (method, url.as_str()) {
+            (tiny_http::Method::Options, _) => {
+                let _ = request.respond(json_response(204, String::new()));
+            }
             (tiny_http::Method::Get, "/health") => {
-                json_response(200, r#"{"status":"ok"}"#.to_string())
+                let busy = in_flight.is_some();
+                let _ = request.respond(json_response(
+                    200,
+                    serde_json::json!({ "status": "ok", "solving": busy }).to_string(),
+                ));
             }
             (tiny_http::Method::Post, "/solve") => {
                 let mut body = String::new();
                 if request.as_reader().read_to_string(&mut body).is_err() {
-                    json_response(400, r#"{"error":"unreadable body"}"#.to_string())
-                } else {
-                    match serde_json::from_str::<SolverInput>(&body) {
-                        Err(e) => json_response(
+                    let _ = request
+                        .respond(json_response(400, r#"{"error":"unreadable body"}"#.into()));
+                    continue;
+                }
+                let input: SolverInput = match serde_json::from_str(&body) {
+                    Err(e) => {
+                        let _ = request.respond(json_response(
                             400,
                             serde_json::json!({ "error": format!("bad input: {e}") })
                                 .to_string(),
-                        ),
-                        Ok(input) => {
-                            let level = format!(
-                                "{}x{}, {} states, {} shapes",
-                                input.height, input.width, effective_k(&input),
-                                input.shapes.len()
-                            );
-                            if let Some((t, steps_json)) = try_cache(&cache, &input) {
-                                let total = cache.as_ref().unwrap().steps.len();
-                                println!("solve {level} ... cache hit (step {}/{total})", t + 1);
-                                json_response(
-                                    200,
-                                    serde_json::json!({
+                        ));
+                        continue;
+                    }
+                    Ok(i) => i,
+                };
+
+                if let Some((t, steps_json)) = try_cache(&cache.lock().unwrap(), &input) {
+                    let total = input.shapes.len() + t;
+                    println!("solve cache hit (step {}/{total})", t + 1);
+                    let _ = request.respond(json_response(
+                        200,
+                        serde_json::json!({
+                            "solved": true,
+                            "steps": steps_json,
+                            "ms": 0,
+                            "cached": true,
+                        })
+                        .to_string(),
+                    ));
+                    continue;
+                }
+
+                // Same board already being solved: become its waiter (a
+                // reload of the same page must not restart the search)
+                if let Some(f) = &in_flight {
+                    if f.input == input {
+                        println!("  (same board re-requested; joining in-flight solve)");
+                        let displaced = f.waiter.lock().unwrap().replace(request);
+                        if let Some(d) = displaced {
+                            let _ = d.respond(json_response(
+                                200,
+                                r#"{"solved":false,"superseded":true}"#.into(),
+                            ));
+                        }
+                        // If the worker finished in the tiny window before the
+                        // swap, nobody will answer the slot: reclaim and serve
+                        // from the cache the worker just wrote.
+                        if f.handle.is_finished() {
+                            if let Some(req) = f.waiter.lock().unwrap().take() {
+                                let resp = match try_cache(&cache.lock().unwrap(), &input) {
+                                    Some((_, steps_json)) => serde_json::json!({
                                         "solved": true,
                                         "steps": steps_json,
                                         "ms": 0,
                                         "cached": true,
-                                    })
-                                    .to_string(),
-                                )
-                            } else {
-                                println!("solve {level} ...");
-                                let t0 = Instant::now();
-                                let (result, stats) = solve_with_heartbeat(&input);
-                                let ms = t0.elapsed().as_millis() as u64;
-                                match result {
-                                    Some(steps) => {
-                                        println!("  -> solved in {ms}ms ({} nodes)", stats.nodes);
-                                        cache = Some(build_cache(&input, &steps));
-                                        let steps_json: Vec<_> = steps
-                                            .iter()
-                                            .map(|s| {
-                                                serde_json::json!({
-                                                    "shapeId": s.original_shape_id,
-                                                    "row": s.placement_y,
-                                                    "col": s.placement_x,
-                                                })
-                                            })
-                                            .collect();
-                                        json_response(
-                                            200,
-                                            serde_json::json!({
-                                                "solved": true,
-                                                "steps": steps_json,
-                                                "ms": ms,
-                                                "nodes": stats.nodes,
-                                                "cached": false,
-                                            })
-                                            .to_string(),
-                                        )
-                                    }
-                                    None => {
-                                        println!("  -> NO SOLUTION in {ms}ms");
-                                        json_response(
-                                            200,
-                                            serde_json::json!({
-                                                "solved": false,
-                                                "ms": ms,
-                                                "nodes": stats.nodes,
-                                            })
-                                            .to_string(),
-                                        )
-                                    }
-                                }
+                                    }),
+                                    None => serde_json::json!({ "solved": false }),
+                                };
+                                let _ = req.respond(json_response(200, resp.to_string()));
                             }
                         }
+                        continue;
                     }
+                    // Different board: cancel the in-flight solve and restart.
+                    // The game rerolls the level on restart, so the player
+                    // deliberately abandoning a struggling board should not
+                    // wait behind its search.
+                    println!("  -> new board received; cancelling in-flight solve");
+                    f.cancelled.store(true, Ordering::Relaxed);
+                    solver_core::CANCEL_FLAG.store(true, Ordering::Relaxed);
+                    let f = in_flight.take().unwrap();
+                    let _ = f.handle.join();
+                    solver_core::CANCEL_FLAG.store(false, Ordering::Relaxed);
                 }
-            }
-            _ => json_response(404, r#"{"error":"not found"}"#.to_string()),
-        };
 
-        let _ = request.respond(response);
+                in_flight = Some(spawn_solve(
+                    input,
+                    request,
+                    Arc::clone(&cache),
+                    Arc::clone(&monitor),
+                ));
+            }
+            _ => {
+                let _ = request.respond(json_response(404, r#"{"error":"not found"}"#.into()));
+            }
+        }
     }
 }

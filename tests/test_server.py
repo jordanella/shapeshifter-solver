@@ -9,9 +9,11 @@ game state, no page markup.
 
 import json
 import os
+import threading
+import time
 import urllib.request
 
-SERVER = 'http://127.0.0.1:8977'
+SERVER = os.environ.get('SOLVER_URL', 'http://127.0.0.1:8977')
 FIXTURES = os.path.join(os.path.dirname(__file__), 'fixtures')
 
 
@@ -87,6 +89,35 @@ def walk_level(name):
           f' ({misses} solve, {hits} cache hits)')
 
 
+def cancel_on_new_board():
+    """A request for a DIFFERENT board must cancel an in-flight hard solve
+    and be answered promptly; the superseded request gets cancelled:true."""
+    hard = load('hard_synthetic.json')
+    result = {}
+
+    def post_hard():
+        try:
+            result['resp'] = post_json('/solve', hard)
+        except Exception as e:  # noqa: BLE001 - record for the assert below
+            result['err'] = repr(e)
+
+    th = threading.Thread(target=post_hard)
+    th.start()
+    time.sleep(2)  # let the hard solve get going
+
+    t0 = time.time()
+    check_level('level_31.json')  # different board: must preempt
+    dt = time.time() - t0
+    assert dt < 30, f'fast board waited {dt:.1f}s behind the hard solve'
+
+    th.join(30)
+    resp = result.get('resp')
+    assert resp is not None and resp.get('cancelled'), \
+        f'expected cancelled response for superseded solve, got {result}'
+    print(f'cancel-on-new-board: hard solve cancelled,'
+          f' fast board answered in {dt:.2f}s')
+
+
 if __name__ == '__main__':
     with urllib.request.urlopen(SERVER + '/health', timeout=5) as r:
         assert json.loads(r.read())['status'] == 'ok'
@@ -96,4 +127,5 @@ if __name__ == '__main__':
     check_level('level_96.json')
     walk_level('level_31.json')
     walk_level('level_96.json')
+    cancel_on_new_board()
     print('All server tests passed.')
