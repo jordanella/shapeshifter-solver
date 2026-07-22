@@ -294,6 +294,7 @@ fn serve(port: u16) {
     println!("shapeshifter solver listening on http://127.0.0.1:{port}");
     println!("  POST /solve  {{width, height, grid, goal, numStates, shapes}}");
     println!("  GET  /health");
+    println!("close this window (or Ctrl+C) to stop the solver");
 
     let cache: Arc<Mutex<Option<Cache>>> = Arc::new(Mutex::new(None));
     let monitor = start_heartbeat_monitor();
