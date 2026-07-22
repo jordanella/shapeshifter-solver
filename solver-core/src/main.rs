@@ -54,9 +54,15 @@ fn solve_with_heartbeat(
 
 fn main() {
     let mut args = std::env::args().skip(1);
-    let first = args
-        .next()
-        .expect("usage: solver-core <input.json> | solver-core serve [port]");
+    // No arguments (e.g. double-clicking the binary) starts the server on
+    // the default port; `solve <file>` / a bare path runs a one-off solve.
+    let first = match args.next() {
+        Some(a) => a,
+        None => {
+            serve(DEFAULT_PORT);
+            return;
+        }
+    };
 
     if first == "serve" {
         let port = args
