@@ -123,17 +123,26 @@ directory of them when running `test_parse_parity.py`. Puzzle data
 originates from levels shipped with the MIT-licensed
 [Bakeru](https://github.com/willnjohnson/Bakeru) repository.
 
-## Building on Windows
+## Building
 
-With the GNU toolchain (`x86_64-pc-windows-gnu`), a stray old GCC on PATH
-(e.g. TDM-GCC) can break linking (`cannot find -lgcc_eh`). Install a
-current mingw-w64 (e.g. WinLibs via winget) and pin it in
-`solver-core/.cargo/config.toml`:
+Pure Rust, no platform-specific code: `cargo build --release` inside
+`solver-core/` works as-is on macOS, Linux, and Windows. Tagging a release
+(`git tag v1.0.0 && git push --tags`) builds binaries for macOS (Apple
+Silicon + Intel), Windows, and Linux via GitHub Actions and attaches them
+to the release; CI runs the full test suite on every push.
+
+### Windows GNU-toolchain note
+
+With `x86_64-pc-windows-gnu`, a stray old GCC on PATH (e.g. TDM-GCC) can
+break linking (`cannot find -lgcc_eh`). Install a current mingw-w64 (e.g.
+WinLibs via winget) and pin it in `solver-core/.cargo/config.toml`:
 
 ```toml
 [target.x86_64-pc-windows-gnu]
 linker = "C:\\path\\to\\mingw64\\bin\\gcc.exe"
 ```
+
+(The MSVC toolchain, including CI's, is unaffected.)
 
 ## Credits
 

@@ -1,0 +1,43 @@
+name: release
+
+# Tag a commit `v*` (e.g. v1.0.0) and push it to get binaries for all
+# platforms attached to a GitHub Release.
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            name: solver-core-linux-x86_64
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            name: solver-core-windows-x86_64.exe
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            name: solver-core-macos-arm64
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            name: solver-core-macos-x86_64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup target add ${{ matrix.target }}
+      - run: cargo build --release --target ${{ matrix.target }}
+        working-directory: solver-core
+      - name: Stage binary under its release name
+        shell: bash
+        run: |
+          ext=""
+          if [[ "${{ matrix.os }}" == "windows-latest" ]]; then ext=".exe"; fi
+          cp "solver-core/target/${{ matrix.target }}/release/solver-core${ext}" "${{ matrix.name }}"
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ matrix.name }}

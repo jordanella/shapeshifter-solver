@@ -1,0 +1,39 @@
+name: ci
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Build
+        run: cargo build --release
+        working-directory: solver-core
+
+      - name: Start server
+        run: |
+          ./solver-core/target/release/solver-core serve &
+          sleep 1
+
+      - name: Server + gameplay tests
+        run: python tests/test_server.py
+
+      - name: Parser round-trip tests
+        run: python tests/test_parse_parity.py
+
+      - name: Userscript DOM tests
+        run: |
+          cd tests/dom
+          npm install
+          node test_userscript_dom.js
