@@ -1,11 +1,14 @@
 name: release
 
-# Tag a commit `v*` (e.g. v1.0.0) and push it: a GitHub Release is created
-# with generated notes and the userscript attached, then binaries for all
-# platforms are built and attached to it.
+# Tag a commit (v1.0.0 or bare 1.0.0) and push it: a GitHub Release is
+# created with generated notes and the userscript attached, then binaries
+# for all platforms are built and attached to it. Publishing a release
+# from the GitHub web UI also works - the tag it creates triggers this.
 on:
   push:
-    tags: ['v*']
+    tags:
+      - 'v*'
+      - '[0-9]*'
 
 permissions:
   contents: write
